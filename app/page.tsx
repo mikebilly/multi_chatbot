@@ -71,6 +71,8 @@ export default function Home() {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (event, session) => {
+      console.log("Auth state changed:", event, session?.user?.id)
+
       if (session?.user) {
         const userData = await DatabaseService.getCurrentUser()
         if (userData) {
@@ -359,21 +361,33 @@ export default function Home() {
     [chatbots],
   )
 
-  const handleSignOut = async () => {
+  const handleSignOut = useCallback(async () => {
+    console.log("Sign out initiated...")
+
     try {
+      // Clear local state immediately
+      setIsAuthenticated(false)
+      setCurrentUser(null)
+      setChatbots([])
+      setUserId("")
+      setIsInitialized(false)
+
+      // Then sign out from Supabase
       const result = await DatabaseService.signOut()
+
       if (!result.success) {
+        console.error("Sign out error:", result.error)
         toast({
           title: "Error",
           description: `Failed to sign out: ${result.error}`,
           variant: "destructive",
         })
       } else {
-        setIsAuthenticated(false)
-        setCurrentUser(null)
-        setChatbots([])
-        setUserId("")
-        setIsInitialized(false)
+        console.log("Sign out successful")
+        toast({
+          title: "Success",
+          description: "Signed out successfully!",
+        })
       }
     } catch (error) {
       console.error("Error signing out:", error)
@@ -383,7 +397,7 @@ export default function Home() {
         variant: "destructive",
       })
     }
-  }
+  }, [])
 
   const activeChatbot = useMemo(() => {
     if (chatbots.length === 0) return null

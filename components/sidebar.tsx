@@ -1,5 +1,7 @@
 "use client"
 
+import { Label } from "@/components/ui/label"
+
 import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -58,6 +60,7 @@ export default function Sidebar({
   const [newChatbotName, setNewChatbotName] = useState("")
   const [editingChatbotId, setEditingChatbotId] = useState<string | null>(null)
   const [editingName, setEditingName] = useState("")
+  const [isSigningOut, setIsSigningOut] = useState(false)
 
   useEffect(() => {
     setExpandedChatbots((prev) => {
@@ -111,6 +114,19 @@ export default function Sidebar({
       }
     } else {
       alert("You must have at least one chatbot.")
+    }
+  }
+
+  const handleSignOut = async () => {
+    if (isSigningOut) return // Prevent double-click
+
+    setIsSigningOut(true)
+    try {
+      await onSignOut()
+    } catch (error) {
+      console.error("Error during sign out:", error)
+    } finally {
+      setIsSigningOut(false)
     }
   }
 
@@ -293,29 +309,45 @@ export default function Sidebar({
       </div>
 
       <div className="p-4 border-t border-zinc-200 dark:border-zinc-800 space-y-2">
-        <Button variant="outline" className="w-full mb-2 justify-start" onClick={() => setIsUserIdModalOpen(true)}>
+        <Button
+          variant="outline"
+          className="w-full mb-2 justify-start"
+          onClick={() => setIsUserIdModalOpen(true)}
+          disabled={isSigningOut}
+        >
           <User size={16} className="mr-2" />
           User: {currentUser?.profile?.username || userId}
         </Button>
 
-        <Button variant="outline" className="w-full justify-start text-red-600 hover:text-red-700" onClick={onSignOut}>
+        <Button
+          variant="outline"
+          className="w-full justify-start text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950"
+          onClick={handleSignOut}
+          disabled={isSigningOut}
+        >
           <LogOut size={16} className="mr-2" />
-          Sign Out
+          {isSigningOut ? "Signing Out..." : "Sign Out"}
         </Button>
       </div>
 
       {isUserIdModalOpen && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-white dark:bg-zinc-900 p-6 rounded-lg w-80">
-            <h2 className="text-lg font-semibold mb-4">Set User ID</h2>
-            <Input
-              value={userId}
-              onChange={(e) => setUserId(e.target.value)}
-              placeholder="Enter user ID"
-              className="mb-4"
-            />
-            <div className="flex justify-end">
-              <Button onClick={() => setIsUserIdModalOpen(false)}>Save</Button>
+            <h2 className="text-lg font-semibold mb-4">User Information</h2>
+            <div className="space-y-3">
+              <div>
+                <Label className="text-sm font-medium">Username</Label>
+                <p className="text-sm text-zinc-600 dark:text-zinc-400">{currentUser?.profile?.username || userId}</p>
+              </div>
+              <div>
+                <Label className="text-sm font-medium">Email</Label>
+                <p className="text-sm text-zinc-600 dark:text-zinc-400">
+                  {currentUser?.user?.email || "Not available"}
+                </p>
+              </div>
+            </div>
+            <div className="flex justify-end mt-6">
+              <Button onClick={() => setIsUserIdModalOpen(false)}>Close</Button>
             </div>
           </div>
         </div>
