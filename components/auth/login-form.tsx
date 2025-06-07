@@ -47,7 +47,7 @@ export default function LoginForm({ onSuccess }: LoginFormProps) {
       if (isLogin) {
         // Login
         const { data, error } = await supabase.auth.signInWithPassword({
-          email: `${username}@chatbot.local`, // Use username as email prefix
+          email: `${username}@gmail.com`, // Use username as email prefix
           password,
         })
 
@@ -59,7 +59,7 @@ export default function LoginForm({ onSuccess }: LoginFormProps) {
       } else {
         // Register
         const { data, error } = await supabase.auth.signUp({
-          email: `${username}@chatbot.local`, // Use username as email prefix
+          email: `${username}@gmail.com`, // Use username as email prefix
           password,
         })
 
