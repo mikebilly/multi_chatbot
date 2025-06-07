@@ -23,6 +23,36 @@ export default function Home() {
   // Check if Supabase is configured
   const isSupabaseConfigured = !!(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)
 
+  // Function to load or create user profile
+  const loadUserProfile = useCallback(async (user: User) => {
+    try {
+      console.log("Loading user profile for:", user.id)
+      const profile = await DatabaseService.getUserProfile(user.id)
+      console.log("Profile loaded successfully:", profile)
+      return profile
+    } catch (error: any) {
+      console.error("Error fetching user profile:", error)
+
+      // If profile doesn't exist, create it
+      const username = user.email?.split("@")[0] || "user"
+      try {
+        console.log("Creating missing user profile...")
+        const newProfile = await DatabaseService.createUserProfile(user.id, username)
+        console.log("User profile created successfully:", newProfile)
+        return newProfile
+      } catch (createError: any) {
+        console.error("Error creating user profile:", createError)
+        // Return a fallback profile
+        return {
+          id: user.id,
+          username,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }
+      }
+    }
+  }, [])
+
   // Check authentication state
   useEffect(() => {
     const checkAuth = async () => {
@@ -41,10 +71,10 @@ export default function Home() {
       if (session?.user) {
         setUser(session.user)
         try {
-          const profile = await DatabaseService.getUserProfile(session.user.id)
+          const profile = await loadUserProfile(session.user)
           setUserProfile(profile)
         } catch (error) {
-          console.error("Error fetching user profile:", error)
+          console.error("Error loading user profile during initial check:", error)
         }
       }
 
@@ -57,13 +87,15 @@ export default function Home() {
       const {
         data: { subscription },
       } = supabase.auth.onAuthStateChange(async (event, session) => {
+        console.log("Auth state changed:", event, session?.user?.id)
+
         if (session?.user) {
           setUser(session.user)
           try {
-            const profile = await DatabaseService.getUserProfile(session.user.id)
+            const profile = await loadUserProfile(session.user)
             setUserProfile(profile)
           } catch (error) {
-            console.error("Error fetching user profile:", error)
+            console.error("Error loading user profile during auth state change:", error)
           }
         } else {
           setUser(null)
@@ -77,7 +109,7 @@ export default function Home() {
 
       return () => subscription.unsubscribe()
     }
-  }, [isSupabaseConfigured])
+  }, [isSupabaseConfigured, loadUserProfile])
 
   // Load user data when authenticated
   useEffect(() => {
@@ -364,6 +396,14 @@ export default function Home() {
 
   if (!user) {
     return <LoginForm onSuccess={() => {}} />
+  }
+
+  if (!userProfile) {
+    return (
+      <div className="flex h-screen bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-50 items-center justify-center">
+        <div className="text-lg">Setting up your profile...</div>
+      </div>
+    )
   }
 
   if (!isInitialized) {

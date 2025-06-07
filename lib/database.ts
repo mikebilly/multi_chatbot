@@ -13,10 +13,28 @@ export class DatabaseService {
       throw new Error("Database not configured")
     }
 
-    const { data, error } = await supabase.from("user_profiles").insert({ id: userId, username }).select().single()
+    try {
+      // First check if profile already exists
+      const { data: existingProfile } = await supabase.from("user_profiles").select("*").eq("id", userId).maybeSingle()
 
-    if (error) throw error
-    return data
+      if (existingProfile) {
+        console.log("Profile already exists, returning existing profile")
+        return existingProfile
+      }
+
+      // Create new profile
+      const { data, error } = await supabase.from("user_profiles").insert({ id: userId, username }).select().single()
+
+      if (error) {
+        console.error("Database error creating profile:", error)
+        throw error
+      }
+
+      return data
+    } catch (error) {
+      console.error("Error in createUserProfile:", error)
+      throw error
+    }
   }
 
   static async getUserProfile(userId: string) {
@@ -24,10 +42,23 @@ export class DatabaseService {
       throw new Error("Database not configured")
     }
 
-    const { data, error } = await supabase.from("user_profiles").select("*").eq("id", userId).single()
+    try {
+      const { data, error } = await supabase.from("user_profiles").select("*").eq("id", userId).maybeSingle()
 
-    if (error) throw error
-    return data
+      if (error) {
+        console.error("Database error fetching profile:", error)
+        throw error
+      }
+
+      if (!data) {
+        throw new Error("Profile not found")
+      }
+
+      return data
+    } catch (error) {
+      console.error("Error in getUserProfile:", error)
+      throw error
+    }
   }
 
   // Chatbot Operations

@@ -54,7 +54,8 @@ export default function LoginForm({ onSuccess }: LoginFormProps) {
         if (error) throw error
 
         if (data.user) {
-          onSuccess()
+          // Let the auth state change handle the rest
+          console.log("Login successful")
         }
       } else {
         // Register
@@ -66,12 +67,21 @@ export default function LoginForm({ onSuccess }: LoginFormProps) {
         if (error) throw error
 
         if (data.user) {
-          // Create user profile
-          await DatabaseService.createUserProfile(data.user.id, username)
-          onSuccess()
+          // Create user profile immediately after successful registration
+          try {
+            console.log("Creating user profile for:", data.user.id)
+            await DatabaseService.createUserProfile(data.user.id, username)
+            console.log("User profile created successfully")
+          } catch (profileError: any) {
+            console.error("Error creating user profile:", profileError)
+            // Don't throw here - the auth state change will handle profile creation as fallback
+          }
+
+          console.log("Registration successful")
         }
       }
     } catch (error: any) {
+      console.error("Auth error:", error)
       setError(error.message)
     } finally {
       setLoading(false)
