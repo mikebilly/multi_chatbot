@@ -25,13 +25,14 @@ interface SidebarProps {
   activeSessionId: string | null
   setActiveChatbotId: (id: string) => void
   setActiveSessionId: (id: string | null) => void
-  createNewSession: (chatbotId: string) => Promise<string>
-  addChatbot: (name: string) => Promise<string>
+  createNewSession: (chatbotId: string) => string
+  addChatbot: (name: string) => string
   removeChatbot: (chatbotId: string) => void
   renameChatbot: (chatbotId: string, newName: string) => void
   userId: string
   setUserId: (id: string) => void
-  onLogout: () => void
+  onSignOut: () => void
+  currentUser: any
 }
 
 export default function Sidebar({
@@ -46,11 +47,13 @@ export default function Sidebar({
   renameChatbot,
   userId,
   setUserId,
-  onLogout,
+  onSignOut,
+  currentUser,
 }: SidebarProps) {
   const [expandedChatbots, setExpandedChatbots] = useState<Record<string, boolean>>(() =>
     chatbots.reduce((acc, bot) => ({ ...acc, [bot.id]: true }), {}),
   )
+  const [isUserIdModalOpen, setIsUserIdModalOpen] = useState(false)
   const [isAddingChatbot, setIsAddingChatbot] = useState(false)
   const [newChatbotName, setNewChatbotName] = useState("")
   const [editingChatbotId, setEditingChatbotId] = useState<string | null>(null)
@@ -75,9 +78,9 @@ export default function Sidebar({
     }))
   }
 
-  const handleAddChatbot = async () => {
+  const handleAddChatbot = () => {
     if (newChatbotName.trim()) {
-      await addChatbot(newChatbotName.trim())
+      addChatbot(newChatbotName.trim())
       setNewChatbotName("")
       setIsAddingChatbot(false)
     }
@@ -102,7 +105,7 @@ export default function Sidebar({
   }
 
   const handleRemoveChatbot = (chatbotId: string) => {
-    if (chatbots.length > 1) {
+    if (chatbots && chatbots.length > 1) {
       if (confirm("Are you sure you want to delete this chatbot? All conversations will be lost.")) {
         removeChatbot(chatbotId)
       }
@@ -158,143 +161,165 @@ export default function Sidebar({
       </div>
 
       <div className="flex-1 overflow-y-auto">
-        {chatbots.map((chatbot) => (
-          <div key={chatbot.id} className="mb-2">
-            <div
-              className={cn(
-                "flex items-center px-4 py-2 cursor-pointer hover:bg-zinc-100 dark:hover:bg-zinc-800 group",
-                activeChatbotId === chatbot.id && "bg-zinc-100 dark:bg-zinc-800",
-              )}
-            >
-              <button
-                onClick={(e) => {
-                  e.stopPropagation()
-                  toggleChatbotExpanded(chatbot.id)
-                }}
-                className="mr-2"
+        {chatbots && chatbots.length > 0 ? (
+          chatbots.map((chatbot) => (
+            <div key={chatbot.id} className="mb-2">
+              <div
+                className={cn(
+                  "flex items-center px-4 py-2 cursor-pointer hover:bg-zinc-100 dark:hover:bg-zinc-800 group",
+                  activeChatbotId === chatbot.id && "bg-zinc-100 dark:bg-zinc-800",
+                )}
               >
-                {expandedChatbots[chatbot.id] ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-              </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    toggleChatbotExpanded(chatbot.id)
+                  }}
+                  className="mr-2"
+                >
+                  {expandedChatbots[chatbot.id] ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                </button>
 
-              {editingChatbotId === chatbot.id ? (
-                <div className="flex-1 flex items-center gap-1">
-                  <Input
-                    value={editingName}
-                    onChange={(e) => setEditingName(e.target.value)}
-                    className="text-sm h-6"
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        handleSaveEdit()
-                      } else if (e.key === "Escape") {
-                        handleCancelEdit()
-                      }
-                    }}
-                    autoFocus
-                  />
-                  <Button size="sm" variant="ghost" onClick={handleSaveEdit}>
-                    <Check size={12} />
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={handleCancelEdit}>
-                    <X size={12} />
-                  </Button>
-                </div>
-              ) : (
-                <>
-                  <span
-                    className="flex-1"
-                    onClick={async () => {
-                      setActiveChatbotId(chatbot.id)
-                      if (chatbot.sessions.length === 0) {
-                        const sessionId = await createNewSession(chatbot.id)
-                        setActiveSessionId(sessionId)
-                      } else if (chatbot.sessions.length > 0 && !activeSessionId) {
-                        setActiveSessionId(chatbot.sessions[0].id)
-                      }
-                    }}
-                  >
-                    {chatbot.name}
-                  </span>
-                  <div className="opacity-0 group-hover:opacity-100 flex items-center gap-1">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        handleStartEdit(chatbot)
+                {editingChatbotId === chatbot.id ? (
+                  <div className="flex-1 flex items-center gap-1">
+                    <Input
+                      value={editingName}
+                      onChange={(e) => setEditingName(e.target.value)}
+                      className="text-sm h-6"
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          handleSaveEdit()
+                        } else if (e.key === "Escape") {
+                          handleCancelEdit()
+                        }
                       }}
-                      className="h-6 w-6"
-                      title="Rename chatbot"
-                    >
-                      <Edit2 size={12} />
+                      autoFocus
+                    />
+                    <Button size="sm" variant="ghost" onClick={handleSaveEdit}>
+                      <Check size={12} />
                     </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={async (e) => {
-                        e.stopPropagation()
-                        const newSessionId = await createNewSession(chatbot.id)
-                        setActiveSessionId(newSessionId)
+                    <Button size="sm" variant="ghost" onClick={handleCancelEdit}>
+                      <X size={12} />
+                    </Button>
+                  </div>
+                ) : (
+                  <>
+                    <span
+                      className="flex-1"
+                      onClick={() => {
+                        setActiveChatbotId(chatbot.id)
+                        if (chatbot.sessions.length === 0) {
+                          createNewSession(chatbot.id)
+                        } else if (chatbot.sessions.length > 0 && !activeSessionId) {
+                          setActiveSessionId(chatbot.sessions[0].id)
+                        }
                       }}
-                      className="h-6 w-6"
-                      title="New chat"
                     >
-                      <PlusCircle size={12} />
-                    </Button>
-                    {chatbots.length > 1 && (
+                      {chatbot.name}
+                    </span>
+                    <div className="opacity-0 group-hover:opacity-100 flex items-center gap-1">
                       <Button
                         variant="ghost"
                         size="icon"
                         onClick={(e) => {
                           e.stopPropagation()
-                          handleRemoveChatbot(chatbot.id)
+                          handleStartEdit(chatbot)
                         }}
-                        className="h-6 w-6 text-red-500 hover:text-red-700"
-                        title="Delete chatbot"
+                        className="h-6 w-6"
+                        title="Rename chatbot"
                       >
-                        <Trash2 size={12} />
+                        <Edit2 size={12} />
                       </Button>
-                    )}
-                  </div>
-                </>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          const newSessionId = createNewSession(chatbot.id)
+                          setActiveSessionId(newSessionId)
+                        }}
+                        className="h-6 w-6"
+                        title="New chat"
+                      >
+                        <PlusCircle size={12} />
+                      </Button>
+                      {chatbots.length > 1 && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleRemoveChatbot(chatbot.id)
+                          }}
+                          className="h-6 w-6 text-red-500 hover:text-red-700"
+                          title="Delete chatbot"
+                        >
+                          <Trash2 size={12} />
+                        </Button>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {expandedChatbots[chatbot.id] && (
+                <div className="ml-6">
+                  {chatbot.sessions.map((session) => (
+                    <div
+                      key={session.id}
+                      className={cn(
+                        "flex items-center px-4 py-2 cursor-pointer hover:bg-zinc-100 dark:hover:bg-zinc-800 text-sm",
+                        activeSessionId === session.id && "bg-zinc-100 dark:bg-zinc-800",
+                      )}
+                      onClick={() => {
+                        setActiveChatbotId(chatbot.id)
+                        setActiveSessionId(session.id)
+                      }}
+                    >
+                      <MessageSquare size={14} className="mr-2" />
+                      <span className="truncate">{session.name}</span>
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
-
-            {expandedChatbots[chatbot.id] && (
-              <div className="ml-6">
-                {chatbot.sessions.map((session) => (
-                  <div
-                    key={session.id}
-                    className={cn(
-                      "flex items-center px-4 py-2 cursor-pointer hover:bg-zinc-100 dark:hover:bg-zinc-800 text-sm",
-                      activeSessionId === session.id && "bg-zinc-100 dark:bg-zinc-800",
-                    )}
-                    onClick={() => {
-                      setActiveChatbotId(chatbot.id)
-                      setActiveSessionId(session.id)
-                    }}
-                  >
-                    <MessageSquare size={14} className="mr-2" />
-                    <span className="truncate">{session.name}</span>
-                  </div>
-                ))}
-              </div>
-            )}
+          ))
+        ) : (
+          <div className="p-4 text-center text-zinc-500">
+            <p>No chatbots available</p>
+            <p className="text-sm mt-1">Click the + button to create one</p>
           </div>
-        ))}
+        )}
       </div>
 
       <div className="p-4 border-t border-zinc-200 dark:border-zinc-800 space-y-2">
-        <div className="flex items-center justify-between text-sm text-zinc-600 dark:text-zinc-400">
-          <div className="flex items-center">
-            <User size={14} className="mr-2" />
-            <span>User: {userId}</span>
-          </div>
-        </div>
-        <Button variant="outline" className="w-full justify-start" onClick={onLogout}>
+        <Button variant="outline" className="w-full mb-2 justify-start" onClick={() => setIsUserIdModalOpen(true)}>
+          <User size={16} className="mr-2" />
+          User: {currentUser?.profile?.username || userId}
+        </Button>
+
+        <Button variant="outline" className="w-full justify-start text-red-600 hover:text-red-700" onClick={onSignOut}>
           <LogOut size={16} className="mr-2" />
-          Logout
+          Sign Out
         </Button>
       </div>
+
+      {isUserIdModalOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white dark:bg-zinc-900 p-6 rounded-lg w-80">
+            <h2 className="text-lg font-semibold mb-4">Set User ID</h2>
+            <Input
+              value={userId}
+              onChange={(e) => setUserId(e.target.value)}
+              placeholder="Enter user ID"
+              className="mb-4"
+            />
+            <div className="flex justify-end">
+              <Button onClick={() => setIsUserIdModalOpen(false)}>Save</Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -12,7 +12,7 @@ import SettingsModal from "@/components/settings-modal"
 import LoadingAnimation from "@/components/loading-animation"
 
 interface ChatInterfaceProps {
-  chatbot: Chatbot
+  chatbot: Chatbot | null
   session: ChatSession | null
   createNewSession: (chatbotId: string) => string
   addMessage: (chatbotId: string, sessionId: string, message: ChatMessage) => void
@@ -32,12 +32,6 @@ export default function ChatInterface({
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: "smooth" })
-    }
-  }, [session?.messages, isLoading])
 
   const handleSendMessage = useCallback(
     async (e: React.FormEvent) => {
@@ -136,8 +130,26 @@ export default function ChatInterface({
         setIsLoading(false)
       }
     },
-    [input, isLoading, session, createNewSession, chatbot.id, chatbot.settings, addMessage, userId],
+    [input, isLoading, session, createNewSession, chatbot?.id, chatbot?.settings, addMessage, userId],
   )
+
+  useEffect(() => {
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: "smooth" })
+    }
+  }, [session?.messages, isLoading])
+
+  // Add null check for chatbot
+  if (!chatbot) {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <div className="text-center">
+          <h3 className="text-lg font-medium mb-2">No chatbot selected</h3>
+          <p className="text-zinc-500">Please select or create a chatbot</p>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <>
