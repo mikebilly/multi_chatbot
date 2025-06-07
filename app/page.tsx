@@ -20,10 +20,12 @@ export default function Home() {
   const [userId, setUserId] = useState<string>("")
   const [isInitialized, setIsInitialized] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
+  const [authDebug, setAuthDebug] = useState("")
 
   // Check database health on startup
   useEffect(() => {
     const checkDatabase = async () => {
+      console.log("Checking database health...")
       const health = await DatabaseService.checkDatabaseHealth()
       console.log("Database health check:", health)
 
@@ -43,24 +45,47 @@ export default function Home() {
   useEffect(() => {
     const checkAuth = async () => {
       try {
+        setAuthDebug("Checking authentication status...")
+        console.log("Checking auth status...")
+
         const {
           data: { session },
+          error: sessionError,
         } = await supabase.auth.getSession()
 
+        if (sessionError) {
+          console.error("Session error:", sessionError)
+          setAuthDebug(`Session error: ${sessionError.message}`)
+          setIsAuthenticated(false)
+          return
+        }
+
+        console.log("Session:", session?.user?.id ? "Found" : "None")
+        setAuthDebug(session?.user?.id ? "Session found, loading user data..." : "No session found")
+
         if (session?.user) {
+          console.log("User found, getting user data...")
           const userData = await DatabaseService.getCurrentUser()
+
           if (userData) {
+            console.log("User data loaded:", userData.user.id)
             setCurrentUser(userData)
             setUserId(userData.profile?.username || userData.user.email?.split("@")[0] || "user")
             setIsAuthenticated(true)
+            setAuthDebug("Authentication successful")
           } else {
+            console.log("Failed to load user data")
+            setAuthDebug("Failed to load user data")
             setIsAuthenticated(false)
           }
         } else {
+          console.log("No user session")
+          setAuthDebug("No user session")
           setIsAuthenticated(false)
         }
       } catch (error) {
         console.error("Auth check error:", error)
+        setAuthDebug(`Auth check error: ${error instanceof Error ? error.message : "Unknown error"}`)
         setIsAuthenticated(false)
       }
     }
@@ -72,17 +97,25 @@ export default function Home() {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (event, session) => {
       console.log("Auth state changed:", event, session?.user?.id)
+      setAuthDebug(`Auth state changed: ${event}`)
 
-      if (session?.user) {
+      if (event === "SIGNED_IN" && session?.user) {
+        console.log("User signed in, loading data...")
+        setAuthDebug("User signed in, loading data...")
+
         const userData = await DatabaseService.getCurrentUser()
         if (userData) {
           setCurrentUser(userData)
           setUserId(userData.profile?.username || userData.user.email?.split("@")[0] || "user")
           setIsAuthenticated(true)
+          setAuthDebug("Sign in complete")
         } else {
           setIsAuthenticated(false)
+          setAuthDebug("Failed to load user data after sign in")
         }
-      } else {
+      } else if (event === "SIGNED_OUT" || !session) {
+        console.log("User signed out")
+        setAuthDebug("User signed out")
         setIsAuthenticated(false)
         setCurrentUser(null)
         setChatbots([])
@@ -99,17 +132,29 @@ export default function Home() {
     const loadUserData = async () => {
       if (isAuthenticated && !isInitialized) {
         setIsLoading(true)
+        setAuthDebug("Loading user chatbots...")
+
         try {
+          console.log("Loading user chatbots...")
           const userChatbots = await DatabaseService.loadUserChatbots()
+          console.log("Loaded chatbots:", userChatbots.length)
+
           setChatbots(userChatbots)
 
           if (userChatbots.length > 0) {
             setActiveChatbotId(userChatbots[0].id)
+
+            // If the first chatbot has sessions, select the first session
+            if (userChatbots[0].sessions && userChatbots[0].sessions.length > 0) {
+              setActiveSessionId(userChatbots[0].sessions[0].id)
+            }
           }
 
           setIsInitialized(true)
+          setAuthDebug("Data loading complete")
         } catch (error) {
           console.error("Error loading user data:", error)
+          setAuthDebug(`Error loading data: ${error instanceof Error ? error.message : "Unknown error"}`)
           toast({
             title: "Error Loading Data",
             description: "Failed to load your chatbots. Please try again later.",
@@ -143,8 +188,20 @@ export default function Home() {
   const createNewSession = useCallback(
     async (chatbotId: string) => {
       try {
+        console.log("Creating new session for chatbot:", chatbotId)
+
+        if (!chatbotId) {
+          console.error("Cannot create session: Missing chatbot ID")
+          return null
+        }
+
         const newSessionId = `session_${Date.now()}`
         const chatbot = chatbots.find((bot) => bot.id === chatbotId)
+
+        if (!chatbot) {
+          console.error("Cannot create session: Chatbot not found")
+          return null
+        }
 
         const newSession = {
           id: newSessionId,
@@ -153,6 +210,7 @@ export default function Home() {
           threadId: `${userId}_${newSessionId}`,
         }
 
+        // Update local state
         setChatbots((prev) =>
           prev.map((bot) =>
             bot.id === chatbotId
@@ -165,13 +223,18 @@ export default function Home() {
         )
 
         // Save to database
+        console.log("Saving new session to database:", newSessionId)
         const result = await DatabaseService.saveSession(chatbotId, newSession)
+
         if (!result.success) {
+          console.error("Failed to save session:", result.error)
           toast({
             title: "Error",
             description: `Failed to save session: ${result.error}`,
             variant: "destructive",
           })
+        } else {
+          console.log("Session saved successfully:", newSessionId)
         }
 
         setActiveChatbotId(chatbotId)
@@ -193,6 +256,14 @@ export default function Home() {
   const updateChatbotSettings = useCallback(
     async (chatbotId: string, settings: any) => {
       try {
+        if (!chatbotId) {
+          console.error("Cannot update settings: Missing chatbot ID")
+          return
+        }
+
+        console.log("Updating settings for chatbot:", chatbotId)
+
+        // Update local state
         setChatbots((prev) => prev.map((bot) => (bot.id === chatbotId ? { ...bot, settings } : bot)))
 
         // Save to database
@@ -200,12 +271,14 @@ export default function Home() {
         if (chatbot) {
           const result = await DatabaseService.saveChatbot({ ...chatbot, settings })
           if (!result.success) {
+            console.error("Failed to save settings:", result.error)
             toast({
               title: "Error",
               description: `Failed to save settings: ${result.error}`,
               variant: "destructive",
             })
           } else {
+            console.log("Settings saved successfully")
             toast({
               title: "Success",
               description: "Settings saved successfully!",
@@ -226,6 +299,14 @@ export default function Home() {
 
   const addMessage = useCallback(async (chatbotId: string, sessionId: string, message: ChatMessage) => {
     try {
+      if (!chatbotId || !sessionId || !message) {
+        console.error("Cannot add message: Missing required parameters")
+        return
+      }
+
+      console.log("Adding message to session:", sessionId, "in chatbot:", chatbotId)
+
+      // Update local state
       setChatbots((prev) =>
         prev.map((bot) =>
           bot.id === chatbotId
@@ -245,9 +326,13 @@ export default function Home() {
       )
 
       // Save to database
+      console.log("Saving message to database:", message.id)
       const result = await DatabaseService.saveMessage(sessionId, message)
+
       if (!result.success) {
-        console.warn("Failed to save message to database:", result.error)
+        console.error("Failed to save message:", result.error)
+      } else {
+        console.log("Message saved successfully:", message.id)
       }
     } catch (error) {
       console.error("Error adding message:", error)
@@ -256,24 +341,36 @@ export default function Home() {
 
   const addChatbot = useCallback(async (name: string) => {
     try {
+      if (!name.trim()) {
+        console.error("Cannot add chatbot: Missing name")
+        return null
+      }
+
+      console.log("Adding new chatbot:", name)
+
       const newChatbot: Chatbot = {
         id: `bot_${Date.now()}`,
         name,
         sessions: [],
       }
 
+      // Update local state
       setChatbots((prev) => [...prev, newChatbot])
       setActiveChatbotId(newChatbot.id)
 
       // Save to database
+      console.log("Saving chatbot to database:", newChatbot.id)
       const result = await DatabaseService.saveChatbot(newChatbot)
+
       if (!result.success) {
+        console.error("Failed to save chatbot:", result.error)
         toast({
           title: "Error",
           description: `Failed to save chatbot: ${result.error}`,
           variant: "destructive",
         })
       } else {
+        console.log("Chatbot saved successfully:", newChatbot.id)
         toast({
           title: "Success",
           description: "Chatbot created successfully!",
@@ -295,17 +392,29 @@ export default function Home() {
   const removeChatbot = useCallback(
     async (chatbotId: string) => {
       try {
+        if (!chatbotId) {
+          console.error("Cannot remove chatbot: Missing chatbot ID")
+          return
+        }
+
+        console.log("Removing chatbot:", chatbotId)
+
+        // Update local state
         setChatbots((prev) => prev.filter((bot) => bot.id !== chatbotId))
 
         // Remove from database
+        console.log("Deleting chatbot from database:", chatbotId)
         const result = await DatabaseService.deleteChatbot(chatbotId)
+
         if (!result.success) {
+          console.error("Failed to delete chatbot:", result.error)
           toast({
             title: "Error",
             description: `Failed to delete chatbot: ${result.error}`,
             variant: "destructive",
           })
         } else {
+          console.log("Chatbot deleted successfully:", chatbotId)
           toast({
             title: "Success",
             description: "Chatbot deleted successfully!",
@@ -335,18 +444,31 @@ export default function Home() {
   const renameChatbot = useCallback(
     async (chatbotId: string, newName: string) => {
       try {
+        if (!chatbotId || !newName.trim()) {
+          console.error("Cannot rename chatbot: Missing required parameters")
+          return
+        }
+
+        console.log("Renaming chatbot:", chatbotId, "to:", newName)
+
+        // Update local state
         setChatbots((prev) => prev.map((bot) => (bot.id === chatbotId ? { ...bot, name: newName } : bot)))
 
         // Save to database
         const chatbot = chatbots.find((bot) => bot.id === chatbotId)
         if (chatbot) {
+          console.log("Saving renamed chatbot to database")
           const result = await DatabaseService.saveChatbot({ ...chatbot, name: newName })
+
           if (!result.success) {
+            console.error("Failed to rename chatbot:", result.error)
             toast({
               title: "Error",
               description: `Failed to rename chatbot: ${result.error}`,
               variant: "destructive",
             })
+          } else {
+            console.log("Chatbot renamed successfully")
           }
         }
       } catch (error) {
@@ -413,7 +535,10 @@ export default function Home() {
   if (isAuthenticated === null) {
     return (
       <div className="flex h-screen bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-50 items-center justify-center">
-        <div className="text-lg">Loading...</div>
+        <div className="text-center">
+          <div className="text-lg mb-2">Loading...</div>
+          {authDebug && <div className="text-sm text-zinc-500">{authDebug}</div>}
+        </div>
       </div>
     )
   }
@@ -427,7 +552,10 @@ export default function Home() {
   if (!isInitialized) {
     return (
       <div className="flex h-screen bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-50 items-center justify-center">
-        <div className="text-lg">Loading your data...</div>
+        <div className="text-center">
+          <div className="text-lg mb-2">Loading your data...</div>
+          {authDebug && <div className="text-sm text-zinc-500">{authDebug}</div>}
+        </div>
       </div>
     )
   }

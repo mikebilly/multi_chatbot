@@ -10,6 +10,8 @@ import { Settings, Send, Loader2 } from "lucide-react"
 import ChatMessages from "@/components/chat-messages"
 import SettingsModal from "@/components/settings-modal"
 import LoadingAnimation from "@/components/loading-animation"
+import { DatabaseService } from "@/lib/database-service"
+import { toast } from "@/components/ui/use-toast"
 
 interface ChatInterfaceProps {
   chatbot: Chatbot | null
@@ -37,12 +39,20 @@ export default function ChatInterface({
     async (e: React.FormEvent) => {
       e.preventDefault()
 
-      if (!input.trim() || isLoading) return
+      if (!input.trim() || isLoading || !chatbot) return
 
       let sessionId = session?.id
 
       if (!sessionId) {
         sessionId = createNewSession(chatbot.id)
+        if (!sessionId) {
+          toast({
+            title: "Error",
+            description: "Failed to create a new session",
+            variant: "destructive",
+          })
+          return
+        }
       }
 
       // Add user message
@@ -54,6 +64,10 @@ export default function ChatInterface({
       }
 
       addMessage(chatbot.id, sessionId, userMessage)
+
+      // Save message to database directly as well
+      await DatabaseService.saveMessage(sessionId, userMessage)
+
       const currentInput = input
       setInput("")
       setIsLoading(true)
@@ -101,6 +115,9 @@ export default function ChatInterface({
           }
 
           addMessage(chatbot.id, sessionId, botMessage)
+
+          // Save bot message to database directly as well
+          await DatabaseService.saveMessage(sessionId, botMessage)
         } else {
           // Fallback response if no webhook is configured
           await new Promise((resolve) => setTimeout(resolve, 1500)) // Simulate processing time
@@ -113,6 +130,9 @@ export default function ChatInterface({
           }
 
           addMessage(chatbot.id, sessionId, botMessage)
+
+          // Save bot message to database directly as well
+          await DatabaseService.saveMessage(sessionId, botMessage)
         }
       } catch (error) {
         console.error("Error sending message:", error)
@@ -126,11 +146,14 @@ export default function ChatInterface({
         }
 
         addMessage(chatbot.id, sessionId, errorMessage)
+
+        // Save error message to database directly as well
+        await DatabaseService.saveMessage(sessionId, errorMessage)
       } finally {
         setIsLoading(false)
       }
     },
-    [input, isLoading, session, createNewSession, chatbot?.id, chatbot?.settings, addMessage, userId],
+    [input, isLoading, session, createNewSession, chatbot, addMessage, userId],
   )
 
   useEffect(() => {

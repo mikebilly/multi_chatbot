@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { supabase } from "@/lib/supabase"
-import { Loader2 } from "lucide-react"
+import { Loader2, Eye, EyeOff } from "lucide-react"
 
 interface AuthFormProps {
   onAuthSuccess: () => void
@@ -20,11 +20,14 @@ export default function AuthForm({ onAuthSuccess }: AuthFormProps) {
   const [password, setPassword] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState("")
+  const [showPassword, setShowPassword] = useState(false)
+  const [debugInfo, setDebugInfo] = useState("")
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setIsLoading(true)
     setError("")
+    setDebugInfo("")
 
     if (!username.trim() || !password.trim()) {
       setError("Please fill in all fields")
@@ -33,22 +36,35 @@ export default function AuthForm({ onAuthSuccess }: AuthFormProps) {
     }
 
     const email = `${username.trim()}@gmail.com`
+    setDebugInfo(`Attempting ${isLogin ? "sign in" : "sign up"} with email: ${email}`)
 
     try {
       if (isLogin) {
         // Login
+        setDebugInfo("Signing in...")
         const { data, error } = await supabase.auth.signInWithPassword({
           email,
           password,
         })
 
-        if (error) throw error
+        if (error) {
+          console.error("Sign in error:", error)
+          throw error
+        }
 
         if (data.user) {
+          setDebugInfo("Sign in successful, checking user data...")
+
+          // Wait a moment for the auth state to update
+          await new Promise((resolve) => setTimeout(resolve, 1000))
+
           onAuthSuccess()
+        } else {
+          throw new Error("No user data returned")
         }
       } else {
         // Register
+        setDebugInfo("Creating new account...")
         const { data, error } = await supabase.auth.signUp({
           email,
           password,
@@ -59,74 +75,65 @@ export default function AuthForm({ onAuthSuccess }: AuthFormProps) {
           },
         })
 
-        if (error) throw error
+        if (error) {
+          console.error("Sign up error:", error)
+          throw error
+        }
 
         if (data.user) {
-          // Check if user profile already exists
-          const { data: existingProfile, error: checkError } = await supabase
-            .from("user_profiles")
-            .select("id")
-            .eq("id", data.user.id)
-            .maybeSingle()
+          setDebugInfo("Account created, setting up profile...")
 
-          if (checkError) {
-            console.error("Error checking existing profile:", checkError)
-          }
+          // Wait for the user to be fully created
+          await new Promise((resolve) => setTimeout(resolve, 2000))
 
-          // Only create profile if it doesn't exist
-          if (!existingProfile) {
-            const { error: profileError } = await supabase.from("user_profiles").insert({
-              id: data.user.id,
-              username: username.trim(),
-            })
-
-            if (profileError) {
-              console.error("Error creating profile:", profileError)
-              // Don't throw here - the user is still created successfully
-            }
-          }
-
-          // Create default chatbots only if they don't exist
-          const { data: existingChatbots, error: chatbotsCheckError } = await supabase
-            .from("chatbots")
-            .select("id")
-            .eq("user_id", data.user.id)
-
-          if (chatbotsCheckError) {
-            console.error("Error checking existing chatbots:", chatbotsCheckError)
-          }
-
-          // Only create default chatbots if none exist
-          if (!existingChatbots || existingChatbots.length === 0) {
-            const defaultChatbots = [
-              { id: `${data.user.id}_assistant`, name: "Assistant" },
-              { id: `${data.user.id}_coder`, name: "Coder" },
-              { id: `${data.user.id}_creative`, name: "Creative" },
-            ]
-
-            for (const bot of defaultChatbots) {
-              const { error: botError } = await supabase.from("chatbots").insert({
-                id: bot.id,
-                user_id: data.user.id,
-                name: bot.name,
-                settings: {},
-              })
-
-              if (botError) {
-                console.error(`Error creating default chatbot ${bot.name}:`, botError)
-                // Don't throw here - continue with other bots
-              }
-            }
+          // Check if we need email confirmation
+          if (!data.session) {
+            setError("Please check your email for a confirmation link before signing in.")
+            setIsLogin(true) // Switch to login mode
+            setIsLoading(false)
+            return
           }
 
           onAuthSuccess()
+        } else {
+          throw new Error("No user data returned from registration")
         }
       }
     } catch (error: any) {
       console.error("Auth error:", error)
-      setError(error.message || "An error occurred")
+
+      let errorMessage = error.message || "An error occurred"
+
+      // Handle specific error cases
+      if (error.message?.includes("Invalid login credentials")) {
+        errorMessage = "Invalid username or password. Please check your credentials."
+      } else if (error.message?.includes("Email not confirmed")) {
+        errorMessage = "Please check your email and click the confirmation link before signing in."
+      } else if (error.message?.includes("User already registered")) {
+        errorMessage = "This username is already taken. Please try signing in instead."
+        setIsLogin(true)
+      } else if (error.message?.includes("Password should be at least")) {
+        errorMessage = "Password must be at least 6 characters long."
+      }
+
+      setError(errorMessage)
+      setDebugInfo(`Error: ${error.message}`)
     } finally {
       setIsLoading(false)
+    }
+  }
+
+  const handleTestConnection = async () => {
+    setDebugInfo("Testing Supabase connection...")
+    try {
+      const { data, error } = await supabase.from("user_profiles").select("count").limit(1)
+      if (error) {
+        setDebugInfo(`Connection test failed: ${error.message}`)
+      } else {
+        setDebugInfo("Connection test successful!")
+      }
+    } catch (error: any) {
+      setDebugInfo(`Connection test error: ${error.message}`)
     }
   }
 
@@ -151,42 +158,77 @@ export default function AuthForm({ onAuthSuccess }: AuthFormProps) {
                 placeholder="Enter username"
                 disabled={isLoading}
                 required
+                autoComplete="username"
               />
               <p className="text-xs text-zinc-500">Email will be: {username}@gmail.com</p>
             </div>
 
             <div className="space-y-2">
               <Label htmlFor="password">Password</Label>
-              <Input
-                id="password"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Enter password"
-                disabled={isLoading}
-                required
-              />
+              <div className="relative">
+                <Input
+                  id="password"
+                  type={showPassword ? "text" : "password"}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Enter password"
+                  disabled={isLoading}
+                  required
+                  autoComplete={isLogin ? "current-password" : "new-password"}
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 h-8 w-8"
+                  onClick={() => setShowPassword(!showPassword)}
+                  disabled={isLoading}
+                >
+                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                </Button>
+              </div>
+              {!isLogin && <p className="text-xs text-zinc-500">Password must be at least 6 characters long</p>}
             </div>
 
-            {error && <div className="text-red-500 text-sm text-center">{error}</div>}
+            {error && (
+              <div className="text-red-500 text-sm text-center p-2 bg-red-50 dark:bg-red-950 rounded">{error}</div>
+            )}
+
+            {debugInfo && (
+              <div className="text-blue-600 text-xs text-center p-2 bg-blue-50 dark:bg-blue-950 rounded">
+                {debugInfo}
+              </div>
+            )}
 
             <Button type="submit" className="w-full" disabled={isLoading}>
               {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               {isLogin ? "Sign In" : "Create Account"}
             </Button>
 
-            <div className="text-center">
+            <div className="text-center space-y-2">
               <button
                 type="button"
                 onClick={() => {
                   setIsLogin(!isLogin)
                   setError("")
+                  setDebugInfo("")
                 }}
                 className="text-sm text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
                 disabled={isLoading}
               >
                 {isLogin ? "Don't have an account? Sign up" : "Already have an account? Sign in"}
               </button>
+
+              <div>
+                <button
+                  type="button"
+                  onClick={handleTestConnection}
+                  className="text-xs text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-300"
+                  disabled={isLoading}
+                >
+                  Test Connection
+                </button>
+              </div>
             </div>
           </form>
         </CardContent>

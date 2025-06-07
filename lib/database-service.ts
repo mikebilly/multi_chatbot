@@ -79,15 +79,33 @@ export class DatabaseService {
 
   static async loadUserChatbots(): Promise<Chatbot[]> {
     try {
+      console.log("Loading user chatbots...")
       const {
         data: { user },
+        error: userError,
       } = await supabase.auth.getUser()
-      if (!user) return []
+
+      if (userError) {
+        console.error("Error getting user:", userError)
+        return []
+      }
+
+      if (!user) {
+        console.log("No authenticated user found")
+        return []
+      }
+
+      console.log("User found:", user.id)
 
       // Ensure user profile exists first
-      await this.getCurrentUser()
+      const userData = await this.getCurrentUser()
+      if (!userData) {
+        console.error("Failed to get current user data")
+        return []
+      }
 
       // Check if user has any chatbots
+      console.log("Fetching chatbots for user:", user.id)
       const { data: chatbots, error: chatbotsError } = await supabase
         .from("chatbots")
         .select("*")
@@ -98,6 +116,8 @@ export class DatabaseService {
         console.error("Error loading chatbots:", chatbotsError)
         return []
       }
+
+      console.log(`Found ${chatbots?.length || 0} chatbots`)
 
       // If no chatbots, create default ones
       if (!chatbots || chatbots.length === 0) {
@@ -147,6 +167,7 @@ export class DatabaseService {
       const chatbotsWithSessions: Chatbot[] = []
 
       for (const chatbot of chatbots) {
+        console.log(`Loading sessions for chatbot ${chatbot.id}`)
         const { data: sessions, error: sessionsError } = await supabase
           .from("chat_sessions")
           .select("*")
@@ -164,10 +185,13 @@ export class DatabaseService {
           continue
         }
 
+        console.log(`Found ${sessions?.length || 0} sessions for chatbot ${chatbot.id}`)
+
         // Load messages for each session
         const sessionsWithMessages: ChatSession[] = []
 
         for (const session of sessions || []) {
+          console.log(`Loading messages for session ${session.id}`)
           const { data: messages, error: messagesError } = await supabase
             .from("chat_messages")
             .select("*")
@@ -184,6 +208,8 @@ export class DatabaseService {
             })
             continue
           }
+
+          console.log(`Found ${messages?.length || 0} messages for session ${session.id}`)
 
           sessionsWithMessages.push({
             id: session.id,
@@ -207,6 +233,7 @@ export class DatabaseService {
         })
       }
 
+      console.log("Successfully loaded all chatbots with sessions and messages")
       return chatbotsWithSessions
     } catch (error) {
       console.error("Error in loadUserChatbots:", error)
@@ -218,7 +245,12 @@ export class DatabaseService {
     try {
       const {
         data: { user },
+        error: userError,
       } = await supabase.auth.getUser()
+
+      if (userError) {
+        return { success: false, error: `Auth error: ${userError.message}` }
+      }
 
       if (!user) {
         return { success: false, error: "User not authenticated" }
@@ -273,13 +305,21 @@ export class DatabaseService {
     try {
       console.log("Saving session:", session.id, "for chatbot:", chatbotId)
 
+      if (!chatbotId) {
+        return { success: false, error: "Missing chatbot ID" }
+      }
+
+      if (!session.id) {
+        return { success: false, error: "Missing session ID" }
+      }
+
       // Use upsert to handle both insert and update cases
       const { error } = await supabase.from("chat_sessions").upsert(
         {
           id: session.id,
           chatbot_id: chatbotId,
-          name: session.name,
-          thread_id: session.threadId,
+          name: session.name || `Chat ${Date.now()}`,
+          thread_id: session.threadId || `thread_${Date.now()}`,
           updated_at: new Date().toISOString(),
         },
         {
@@ -293,6 +333,16 @@ export class DatabaseService {
       }
 
       console.log("Session saved successfully")
+
+      // If the session has messages, save them too
+      if (session.messages && session.messages.length > 0) {
+        console.log(`Saving ${session.messages.length} messages for session ${session.id}`)
+
+        for (const message of session.messages) {
+          await this.saveMessage(session.id, message)
+        }
+      }
+
       return { success: true }
     } catch (error) {
       console.error("Error in saveSession:", error)
@@ -304,6 +354,22 @@ export class DatabaseService {
     try {
       console.log("Saving message:", message.id, "to session:", sessionId)
 
+      if (!sessionId) {
+        return { success: false, error: "Missing session ID" }
+      }
+
+      if (!message.id) {
+        return { success: false, error: "Missing message ID" }
+      }
+
+      if (!message.role) {
+        return { success: false, error: "Missing message role" }
+      }
+
+      if (!message.content) {
+        return { success: false, error: "Missing message content" }
+      }
+
       // Use upsert to handle duplicate message IDs
       const { error } = await supabase.from("chat_messages").upsert(
         {
@@ -311,7 +377,7 @@ export class DatabaseService {
           session_id: sessionId,
           role: message.role,
           content: message.content,
-          timestamp: message.timestamp,
+          timestamp: message.timestamp || new Date().toISOString(),
         },
         {
           onConflict: "id",
