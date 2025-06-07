@@ -72,9 +72,18 @@ export default function LoginForm({ onSuccess }: LoginFormProps) {
             console.log("Creating user profile for:", data.user.id)
             await DatabaseService.createUserProfile(data.user.id, username)
             console.log("User profile created successfully")
+
+            // Wait a moment for the profile to be fully created before proceeding
+            await new Promise((resolve) => setTimeout(resolve, 500))
           } catch (profileError: any) {
             console.error("Error creating user profile:", profileError)
-            // Don't throw here - the auth state change will handle profile creation as fallback
+            // If profile creation fails, show error and don't proceed
+            if (profileError.message.includes("duplicate key")) {
+              console.log("Profile already exists, continuing...")
+            } else {
+              setError("Failed to create user profile. Please try again.")
+              return
+            }
           }
 
           console.log("Registration successful")

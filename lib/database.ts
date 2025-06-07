@@ -15,17 +15,43 @@ export class DatabaseService {
 
     try {
       // First check if profile already exists
-      const { data: existingProfile } = await supabase.from("user_profiles").select("*").eq("id", userId).maybeSingle()
+      const { data: existingProfile, error: checkError } = await supabase
+        .from("user_profiles")
+        .select("*")
+        .eq("id", userId)
+        .maybeSingle()
+
+      if (checkError && !checkError.message.includes("PGRST116")) {
+        console.error("Error checking existing profile:", checkError)
+        throw checkError
+      }
 
       if (existingProfile) {
         console.log("Profile already exists, returning existing profile")
         return existingProfile
       }
 
-      // Create new profile
+      // Create new profile with conflict handling
       const { data, error } = await supabase.from("user_profiles").insert({ id: userId, username }).select().single()
 
       if (error) {
+        // If it's a duplicate key error, try to fetch the existing profile
+        if (error.code === "23505" || error.message.includes("duplicate key")) {
+          console.log("Profile was created by another process, fetching it...")
+          const { data: fetchedProfile, error: fetchError } = await supabase
+            .from("user_profiles")
+            .select("*")
+            .eq("id", userId)
+            .single()
+
+          if (fetchError) {
+            console.error("Error fetching existing profile after conflict:", fetchError)
+            throw fetchError
+          }
+
+          return fetchedProfile
+        }
+
         console.error("Database error creating profile:", error)
         throw error
       }
@@ -72,60 +98,65 @@ export class DatabaseService {
       ]
     }
 
-    const { data: chatbotsData, error: chatbotsError } = await supabase
-      .from("chatbots")
-      .select("*")
-      .eq("user_id", userId)
-      .order("created_at", { ascending: true })
-
-    if (chatbotsError) throw chatbotsError
-
-    const chatbots: Chatbot[] = []
-
-    for (const chatbot of chatbotsData) {
-      const { data: sessionsData, error: sessionsError } = await supabase
-        .from("chat_sessions")
+    try {
+      const { data: chatbotsData, error: chatbotsError } = await supabase
+        .from("chatbots")
         .select("*")
-        .eq("chatbot_id", chatbot.id)
+        .eq("user_id", userId)
         .order("created_at", { ascending: true })
 
-      if (sessionsError) throw sessionsError
+      if (chatbotsError) throw chatbotsError
 
-      const sessions: ChatSession[] = []
+      const chatbots: Chatbot[] = []
 
-      for (const session of sessionsData) {
-        const { data: messagesData, error: messagesError } = await supabase
-          .from("chat_messages")
+      for (const chatbot of chatbotsData) {
+        const { data: sessionsData, error: sessionsError } = await supabase
+          .from("chat_sessions")
           .select("*")
-          .eq("session_id", session.id)
-          .order("timestamp", { ascending: true })
+          .eq("chatbot_id", chatbot.id)
+          .order("created_at", { ascending: true })
 
-        if (messagesError) throw messagesError
+        if (sessionsError) throw sessionsError
 
-        const messages: ChatMessage[] = messagesData.map((msg) => ({
-          id: msg.id,
-          role: msg.role as "user" | "assistant" | "system",
-          content: msg.content,
-          timestamp: msg.timestamp,
-        }))
+        const sessions: ChatSession[] = []
 
-        sessions.push({
-          id: session.id,
-          name: session.name,
-          messages,
-          threadId: session.thread_id,
+        for (const session of sessionsData) {
+          const { data: messagesData, error: messagesError } = await supabase
+            .from("chat_messages")
+            .select("*")
+            .eq("session_id", session.id)
+            .order("timestamp", { ascending: true })
+
+          if (messagesError) throw messagesError
+
+          const messages: ChatMessage[] = messagesData.map((msg) => ({
+            id: msg.id,
+            role: msg.role as "user" | "assistant" | "system",
+            content: msg.content,
+            timestamp: msg.timestamp,
+          }))
+
+          sessions.push({
+            id: session.id,
+            name: session.name,
+            messages,
+            threadId: session.thread_id,
+          })
+        }
+
+        chatbots.push({
+          id: chatbot.id,
+          name: chatbot.name,
+          sessions,
+          settings: chatbot.settings,
         })
       }
 
-      chatbots.push({
-        id: chatbot.id,
-        name: chatbot.name,
-        sessions,
-        settings: chatbot.settings,
-      })
+      return chatbots
+    } catch (error) {
+      console.error("Error in getChatbots:", error)
+      throw error
     }
-
-    return chatbots
   }
 
   static async createChatbot(userId: string, name: string): Promise<string> {
@@ -134,14 +165,19 @@ export class DatabaseService {
       return `bot_${Date.now()}`
     }
 
-    const { data, error } = await supabase
-      .from("chatbots")
-      .insert({ user_id: userId, name, settings: {} })
-      .select()
-      .single()
+    try {
+      const { data, error } = await supabase
+        .from("chatbots")
+        .insert({ user_id: userId, name, settings: {} })
+        .select()
+        .single()
 
-    if (error) throw error
-    return data.id
+      if (error) throw error
+      return data.id
+    } catch (error) {
+      console.error("Error in createChatbot:", error)
+      throw error
+    }
   }
 
   static async updateChatbot(chatbotId: string, updates: { name?: string; settings?: any }) {
@@ -149,12 +185,17 @@ export class DatabaseService {
       return // No-op for development
     }
 
-    const { error } = await supabase
-      .from("chatbots")
-      .update({ ...updates, updated_at: new Date().toISOString() })
-      .eq("id", chatbotId)
+    try {
+      const { error } = await supabase
+        .from("chatbots")
+        .update({ ...updates, updated_at: new Date().toISOString() })
+        .eq("id", chatbotId)
 
-    if (error) throw error
+      if (error) throw error
+    } catch (error) {
+      console.error("Error in updateChatbot:", error)
+      throw error
+    }
   }
 
   static async deleteChatbot(chatbotId: string) {
@@ -162,9 +203,14 @@ export class DatabaseService {
       return // No-op for development
     }
 
-    const { error } = await supabase.from("chatbots").delete().eq("id", chatbotId)
+    try {
+      const { error } = await supabase.from("chatbots").delete().eq("id", chatbotId)
 
-    if (error) throw error
+      if (error) throw error
+    } catch (error) {
+      console.error("Error in deleteChatbot:", error)
+      throw error
+    }
   }
 
   // Session Operations
@@ -174,14 +220,19 @@ export class DatabaseService {
       return `session_${Date.now()}`
     }
 
-    const { data, error } = await supabase
-      .from("chat_sessions")
-      .insert({ chatbot_id: chatbotId, name, thread_id: threadId })
-      .select()
-      .single()
+    try {
+      const { data, error } = await supabase
+        .from("chat_sessions")
+        .insert({ chatbot_id: chatbotId, name, thread_id: threadId })
+        .select()
+        .single()
 
-    if (error) throw error
-    return data.id
+      if (error) throw error
+      return data.id
+    } catch (error) {
+      console.error("Error in createSession:", error)
+      throw error
+    }
   }
 
   static async updateSession(sessionId: string, updates: { name?: string }) {
@@ -189,12 +240,17 @@ export class DatabaseService {
       return // No-op for development
     }
 
-    const { error } = await supabase
-      .from("chat_sessions")
-      .update({ ...updates, updated_at: new Date().toISOString() })
-      .eq("id", sessionId)
+    try {
+      const { error } = await supabase
+        .from("chat_sessions")
+        .update({ ...updates, updated_at: new Date().toISOString() })
+        .eq("id", sessionId)
 
-    if (error) throw error
+      if (error) throw error
+    } catch (error) {
+      console.error("Error in updateSession:", error)
+      throw error
+    }
   }
 
   static async deleteSession(sessionId: string) {
@@ -202,9 +258,14 @@ export class DatabaseService {
       return // No-op for development
     }
 
-    const { error } = await supabase.from("chat_sessions").delete().eq("id", sessionId)
+    try {
+      const { error } = await supabase.from("chat_sessions").delete().eq("id", sessionId)
 
-    if (error) throw error
+      if (error) throw error
+    } catch (error) {
+      console.error("Error in deleteSession:", error)
+      throw error
+    }
   }
 
   // Message Operations
@@ -213,13 +274,18 @@ export class DatabaseService {
       return // No-op for development
     }
 
-    const { error } = await supabase.from("chat_messages").insert({
-      session_id: sessionId,
-      role: message.role,
-      content: message.content,
-      timestamp: message.timestamp,
-    })
+    try {
+      const { error } = await supabase.from("chat_messages").insert({
+        session_id: sessionId,
+        role: message.role,
+        content: message.content,
+        timestamp: message.timestamp,
+      })
 
-    if (error) throw error
+      if (error) throw error
+    } catch (error) {
+      console.error("Error in addMessage:", error)
+      throw error
+    }
   }
 }

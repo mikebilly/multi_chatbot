@@ -23,26 +23,58 @@ export default function Home() {
   // Check if Supabase is configured
   const isSupabaseConfigured = !!(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)
 
-  // Function to load or create user profile
-  const loadUserProfile = useCallback(async (user: User) => {
-    try {
-      console.log("Loading user profile for:", user.id)
-      const profile = await DatabaseService.getUserProfile(user.id)
-      console.log("Profile loaded successfully:", profile)
-      return profile
-    } catch (error: any) {
-      console.error("Error fetching user profile:", error)
-
-      // If profile doesn't exist, create it
-      const username = user.email?.split("@")[0] || "user"
+  // Function to load or create user profile with better error handling
+  const loadUserProfile = useCallback(
+    async (user: User, isInitialLoad = false, retryCount = 0) => {
       try {
-        console.log("Creating missing user profile...")
-        const newProfile = await DatabaseService.createUserProfile(user.id, username)
-        console.log("User profile created successfully:", newProfile)
-        return newProfile
-      } catch (createError: any) {
-        console.error("Error creating user profile:", createError)
-        // Return a fallback profile
+        console.log("Loading user profile for:", user.id, "retry:", retryCount)
+        const profile = await DatabaseService.getUserProfile(user.id)
+        console.log("Profile loaded successfully:", profile)
+        return profile
+      } catch (error: any) {
+        console.error("Error fetching user profile:", error)
+
+        // If profile not found and we haven't retried too many times, wait and retry
+        if (error.message === "Profile not found" && retryCount < 3) {
+          console.log("Profile not found, retrying in 1 second...")
+          await new Promise((resolve) => setTimeout(resolve, 1000))
+          return loadUserProfile(user, isInitialLoad, retryCount + 1)
+        }
+
+        // Only try to create profile if it's not found and we're configured
+        if (error.message === "Profile not found" && isSupabaseConfigured) {
+          const username = user.email?.split("@")[0] || "user"
+          try {
+            console.log("Creating missing user profile...")
+            const newProfile = await DatabaseService.createUserProfile(user.id, username)
+            console.log("User profile created successfully:", newProfile)
+            return newProfile
+          } catch (createError: any) {
+            console.error("Error creating user profile:", createError)
+
+            // If we're in initial load and profile creation fails, return null
+            // This will trigger the login form to show
+            if (isInitialLoad) {
+              return null
+            }
+
+            // Return a fallback profile for non-initial loads
+            return {
+              id: user.id,
+              username,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            }
+          }
+        }
+
+        // If we're in initial load and there's an error, return null
+        if (isInitialLoad) {
+          return null
+        }
+
+        // Return a fallback profile for non-initial loads
+        const username = user.email?.split("@")[0] || "user"
         return {
           id: user.id,
           username,
@@ -50,8 +82,9 @@ export default function Home() {
           updated_at: new Date().toISOString(),
         }
       }
-    }
-  }, [])
+    },
+    [isSupabaseConfigured],
+  )
 
   // Check authentication state
   useEffect(() => {
@@ -64,18 +97,28 @@ export default function Home() {
         return
       }
 
-      const {
-        data: { session },
-      } = await supabase.auth.getSession()
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession()
 
-      if (session?.user) {
-        setUser(session.user)
-        try {
-          const profile = await loadUserProfile(session.user)
-          setUserProfile(profile)
-        } catch (error) {
-          console.error("Error loading user profile during initial check:", error)
+        if (session?.user) {
+          setUser(session.user)
+
+          // Try to load profile, but don't fail if it doesn't exist
+          const profile = await loadUserProfile(session.user, true)
+          if (profile) {
+            setUserProfile(profile)
+          } else {
+            // Profile doesn't exist or couldn't be created, user needs to register/login
+            console.log("No profile found, user needs to authenticate")
+            setUser(null)
+          }
         }
+      } catch (error) {
+        console.error("Error during initial auth check:", error)
+        // Don't fail completely, just set user to null so login form shows
+        setUser(null)
       }
 
       setLoading(false)
@@ -92,8 +135,16 @@ export default function Home() {
         if (session?.user) {
           setUser(session.user)
           try {
-            const profile = await loadUserProfile(session.user)
-            setUserProfile(profile)
+            // For new registrations, wait a bit longer before trying to load profile
+            if (event === "SIGNED_UP") {
+              console.log("New user signed up, waiting before loading profile...")
+              await new Promise((resolve) => setTimeout(resolve, 1000))
+            }
+
+            const profile = await loadUserProfile(session.user, false)
+            if (profile) {
+              setUserProfile(profile)
+            }
           } catch (error) {
             console.error("Error loading user profile during auth state change:", error)
           }
